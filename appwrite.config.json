@@ -1,0 +1,51 @@
+{
+    "projectId": "<PROJECT_ID>",
+    "projectName": "Magnet Vault",
+    "endpoint": "https://<REGION>.cloud.appwrite.io/v1",
+    "sites": [
+        {
+            "$id": "magnet-vault",
+            "name": "Magnet Vault",
+            "framework": "other",
+            "adapter": "static",
+            "installCommand": "npm install",
+            "buildCommand": "npm run build",
+            "outputDirectory": "./dist",
+            "fallbackFile": "index.html",
+            "buildRuntime": "node-22",
+            "path": "."
+        }
+    ],
+    "tablesDB": [
+        {
+            "$id": "magnet-vault-db",
+            "name": "magnet-vault-db",
+            "enabled": true
+        }
+    ],
+    "tables": [
+        {
+            "$id": "links",
+            "$permissions": ["create(\"any\")", "read(\"any\")", "delete(\"any\")"],
+            "databaseId": "magnet-vault-db",
+            "name": "links",
+            "enabled": true,
+            "rowSecurity": false,
+            "columns": [
+                {
+                    "key": "title",
+                    "type": "varchar",
+                    "required": true,
+                    "size": 1000
+                },
+                {
+                    "key": "magnet",
+                    "type": "varchar",
+                    "required": true,
+                    "size": 4000
+                }
+            ],
+            "indexes": []
+        }
+    ]
+}
