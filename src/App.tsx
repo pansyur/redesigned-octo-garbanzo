@@ -66,6 +66,27 @@ function splitIntoGroups(arr: Link[], splitCount: number, perGroup: number): Lin
   }
   return [arr];
 }
+function parseEpisodeRanges(spec: string): Array<[number, number]> {
+  if (!spec) return [];
+  const ranges: Array<[number, number]> = [];
+  for (const part of spec.split(",")) {
+    const p = part.trim();
+    if (!p) continue;
+    const m = p.match(/^(\d+)\s*-\s*(\d+)$/);
+    if (m) {
+      const a = parseInt(m[1], 10), b = parseInt(m[2], 10);
+      ranges.push(a <= b ? [a, b] : [b, a]);
+    } else if (/^\d+$/.test(p)) {
+      const n = parseInt(p, 10);
+      ranges.push([n, n]);
+    }
+  }
+  return ranges;
+}
+function episodeInRanges(ep: number | null, ranges: Array<[number, number]>) {
+  if (ep === null || !ranges.length) return false;
+  return ranges.some(([a, b]) => ep >= a && ep <= b);
+}
 
 // ── API (Appwrite) ──────────────────────────────────────────────────────────
 function rowToLink(r: any): Link {
@@ -210,6 +231,7 @@ export default function App() {
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(new Set());
   const [syncing, setSyncing] = useState(false);
   const [connected, setConnected] = useState(false);
+  const dbOrderRef = useRef<string[]>([]);
 
   const [toasts, setToasts] = useState<Toast[]>([]);
   const toastIdRef = useRef(0);
@@ -233,6 +255,7 @@ export default function App() {
   const [fOr, setFOr] = useState("");
   const [fOnly, setFOnly] = useState("");
   const [fExcept, setFExcept] = useState("");
+  const [fEpisodes, setFEpisodes] = useState("");
   const [fHideCount, setFHideCount] = useState("");
   const [fHidePos, setFHidePos] = useState<"top" | "bottom">("top");
   const [fSplit, setFSplit] = useState("");
@@ -263,19 +286,21 @@ export default function App() {
     or: fOr.trim().toLowerCase(),
     only: fOnly.trim().toLowerCase(),
     except: fExcept.trim().toLowerCase(),
+    episodes: fEpisodes.trim(),
     hideCount: parseInt(fHideCount || "0", 10),
     hidePos: fHidePos,
     splitCount: parseInt(fSplit || "0", 10),
     perGroup: parseInt(fPerGroup || "0", 10),
-  }), [fShow, fTerm, fOr, fOnly, fExcept, fHideCount, fHidePos, fSplit, fPerGroup]);
+  }), [fShow, fTerm, fOr, fOnly, fExcept, fEpisodes, fHideCount, fHidePos, fSplit, fPerGroup]);
 
-  const isFilterActive = !!(filters.show || filters.term || filters.or || filters.only || filters.except || (filters.hideCount > 0));
+  const isFilterActive = !!(filters.show || filters.term || filters.or || filters.only || filters.except || filters.episodes || (filters.hideCount > 0));
 
   const filteredLinks = useMemo(() => {
     const terms = filters.term ? filters.term.split(/\s+/).filter(Boolean) : [];
     const orTerms = filters.or ? filters.or.split(/\s+/).filter(Boolean) : [];
     const onlyPhrases = filters.only ? filters.only.split(",").map((p) => p.trim()).filter(Boolean) : [];
     const exceptPhrases = filters.except ? filters.except.split(",").map((p) => p.trim()).filter(Boolean) : [];
+    const episodeRanges = parseEpisodeRanges(filters.episodes);
 
     let result = allLinks.filter((l) => {
       if (hiddenIds.has(l.id)) return false;
@@ -288,6 +313,10 @@ export default function App() {
       if (filters.show && !showName.includes(filters.show)) return false;
       if (terms.length && !terms.every((t) => searchText.includes(t))) return false;
       if (orTerms.length && !orTerms.some((t) => searchText.includes(t))) return false;
+      if (episodeRanges.length) {
+        const se = parseSeasonEpisode(l.title);
+        if (!episodeInRanges(se ? se.episode : null, episodeRanges)) return false;
+      }
       return true;
     });
 
@@ -311,6 +340,7 @@ export default function App() {
     try {
       const data = await dbListLinks();
       setAllLinks(data.list || []);
+      dbOrderRef.current = (data.list || []).map((l) => l.id);
       setConnected(true);
       setHiddenIds(new Set());
       pushToast("Vault synced", "ok");
@@ -372,6 +402,18 @@ export default function App() {
       return epA - epB;
     }));
     pushToast("Sorted by season + episode");
+  }
+
+  function handleSortByDbOrder() {
+    const order = dbOrderRef.current;
+    if (!order.length) return pushToast("No database order recorded yet", "error");
+    const indexOf = new Map(order.map((id, i) => [id, i]));
+    setAllLinks((prev) => [...prev].sort((a, b) => {
+      const ia = indexOf.has(a.id) ? indexOf.get(a.id)! : Number.MAX_SAFE_INTEGER;
+      const ib = indexOf.has(b.id) ? indexOf.get(b.id)! : Number.MAX_SAFE_INTEGER;
+      return ia - ib;
+    }));
+    pushToast("Sorted to match Appwrite database order");
   }
 
   function handleDedupe() {
@@ -587,6 +629,7 @@ export default function App() {
           </div>
           <div className="filter-row">
             <div className="input-wrap"><I.Search /><input type="text" value={fExcept} onChange={(e) => setFExcept(e.target.value)} placeholder="except exact phrase (e.g. cam, telesync)" /></div>
+            <div className="input-wrap"><I.Search /><input type="text" value={fEpisodes} onChange={(e) => setFEpisodes(e.target.value)} placeholder="episodes (e.g. 5-17,19,20-24)" /></div>
           </div>
           <div className="filter-row">
             <div className="input-wrap" style={{ flex: 2 }}><I.Eye /><input type="number" value={fHideCount} onChange={(e) => setFHideCount(e.target.value)} placeholder="Number of links to hide..." min={0} /></div>
@@ -621,6 +664,7 @@ export default function App() {
         <div className="action-bar">
           <button className={`btn${copyAllPrimary ? " btn-primary" : ""}`} disabled={syncing} onClick={handleCopyAll}><I.Copy />{copyAllLabel}</button>
           <button className="btn" disabled={syncing} onClick={handleSort}><I.Sort />Sort by Episode</button>
+          <button className="btn" disabled={syncing} onClick={handleSortByDbOrder}><I.Sort />Sort by Database</button>
           <button className="btn" disabled={syncing} onClick={handleDedupe}><I.Dedupe />{dedupeLabel}</button>
           <button className="btn" disabled={syncing} onClick={handleExactDedupe}><I.Exact />{exactLabel}</button>
           <button className="btn" disabled={syncing} onClick={fetchLinks}><I.Sync spin={syncing} />Sync</button>
